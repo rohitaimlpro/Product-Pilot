@@ -12,6 +12,7 @@ An intelligent product recommendation system powered by **LangGraph** and **Goog
 - **API Integration**: Seamless integration with Google Gemini and SERP APIs
 
 ## 🏗️ System Architecture
+![alt text](<Untitled diagram _ Mermaid Chart-2025-08-12-082556.png>)
 
 
 
