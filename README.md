@@ -1,4 +1,4 @@
-# 🛍️ AI Product Recommendation System
+# 🛍️PRODUCT PILOT AI - Product Recommendation System
 
 An intelligent product recommendation system powered by **LangGraph** and **Google Gemini AI** that provides comprehensive product analysis, price comparisons, reviews, and personalized recommendations.
 
