@@ -2,6 +2,14 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import Dict, Any
 import json
+from dotenv import load_dotenv
+import os
+import requests
+
+# Load environment variables
+load_dotenv(override=True)
+
+# Rest of the code...
 
 def recommendation_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -10,6 +18,48 @@ def recommendation_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     
     user_input = state.get("input", "")
+    
+    # Try to get products from SERP API first
+    try:
+        serpapi_key = os.getenv("SERP_API_KEY")
+        if serpapi_key:
+            search_query = f"{user_input} best products to buy"
+            url = "https://serpapi.com/search"
+            params = {
+                "q": search_query,
+                "api_key": serpapi_key,
+                "engine": "google"
+            }
+            
+            response = requests.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                products = []
+                
+                # Extract product names from shopping results
+                if "shopping_results" in data:
+                    for item in data["shopping_results"][:3]:
+                        products.append(item.get("title", ""))
+                
+                # If not enough products, try organic results
+                if len(products) < 2 and "organic_results" in data:
+                    for item in data["organic_results"][:5]:
+                        title = item.get("title", "")
+                        if title and title not in products:
+                            products.append(title)
+                            if len(products) >= 3:
+                                break
+                
+                # Clean and filter products
+                products = [p.strip() for p in products if p.strip()][:3]
+                
+                if len(products) >= 2:
+                    print(f"✅ SERP API found {len(products)} products: {products}")
+                    state["products"] = products
+                    state["current_step"] = f"Recommendations generated: {len(products)} products"
+                    return state
+    except Exception as e:
+        print(f"⚠️ SERP API error: {str(e)}")
     
     # Initialize LLM
     llm = ChatGoogleGenerativeAI(

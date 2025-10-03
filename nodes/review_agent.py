@@ -1,11 +1,15 @@
 # nodes/review_agent.py - FIXED
+from dotenv import load_dotenv
+import os
 import requests
 from langchain_google_genai import ChatGoogleGenerativeAI
-import os
+
+# Load environment variables
+load_dotenv(override=True)
 
 def get_llm():
     return ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash-exp",
         temperature=0.1,
         google_api_key=os.getenv("GOOGLE_API_KEY")
     )
@@ -15,6 +19,7 @@ def fetch_review_snippets(query):
     SERP_API_KEY = os.getenv('SERP_API_KEY')
     
     if not SERP_API_KEY:
+        print(f"❌ SERP_API_KEY not found in review_agent for query: {query}")
         return []
     
     url = "https://serpapi.com/search"
@@ -28,17 +33,20 @@ def fetch_review_snippets(query):
     
     try:
         response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
         data = response.json()
         
         snippets = []
         if "organic_results" in data:
-            for result in data["organic_results"][:5]:  # Limit to 5 results
+            for result in data["organic_results"][:5]:
                 snippet = result.get("snippet", "")
                 if snippet:
                     snippets.append(snippet)
         
+        print(f"✅ Found {len(snippets)} review snippets for {query}")
         return snippets
     except Exception as e:
+        print(f"❌ Error fetching reviews for {query}: {str(e)}")
         return []
 
 def classify_reviews_with_llm(snippets, llm):
@@ -48,8 +56,7 @@ def classify_reviews_with_llm(snippets, llm):
         return {"positive_reviews": [], "negative_reviews": []}
     
     try:
-        # Combine snippets for batch processing
-        combined_snippets = "\n---\n".join(snippets[:5])  # Limit snippets
+        combined_snippets = "\n---\n".join(snippets[:5])
         
         prompt = f"""
         Analyze these review snippets and categorize them as positive or negative:
@@ -67,7 +74,6 @@ def classify_reviews_with_llm(snippets, llm):
         result = llm.invoke(prompt)
         response_text = result.content if hasattr(result, 'content') else str(result)
         
-        # Simple parsing of the response
         positive_reviews = []
         negative_reviews = []
         
@@ -83,7 +89,8 @@ def classify_reviews_with_llm(snippets, llm):
             "positive_reviews": positive_reviews[:3],
             "negative_reviews": negative_reviews[:3]
         }
-    except Exception:
+    except Exception as e:
+        print(f"❌ Error classifying reviews: {str(e)}")
         return {"positive_reviews": [], "negative_reviews": []}
 
 def review_rating_agent_node(state: dict) -> dict:
@@ -92,11 +99,20 @@ def review_rating_agent_node(state: dict) -> dict:
     """
     product_names = state.get("products", [])
     
+    if not product_names:
+        print("⚠️ No products to fetch reviews for")
+        return {
+            **state,
+            "review_data": [],
+            "current_step": "No products for review collection"
+        }
+    
     try:
         llm = get_llm()
         review_data = []
         
-        for product in product_names[:3]:  # Limit to 3 products
+        for product in product_names[:3]:
+            print(f"🔍 Fetching reviews for: {product}")
             snippets = fetch_review_snippets(product)
             classified_reviews = classify_reviews_with_llm(snippets, llm)
             
@@ -105,12 +121,14 @@ def review_rating_agent_node(state: dict) -> dict:
                 "reviews": classified_reviews
             })
         
+        print(f"✅ Review data collected for {len(review_data)} products")
         return {
             **state,
             "review_data": review_data,
             "current_step": f"Review data collected for {len(review_data)} products"
         }
     except Exception as e:
+        print(f"❌ Review collection failed: {str(e)}")
         return {
             **state,
             "review_data": [],

@@ -1,6 +1,26 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
+from pathlib import Path
+
+# ⚠️ CRITICAL: Load environment variables FIRST before importing nodes
+# Load from nodes/.env since that's where your .env file is
+env_path = Path(__file__).parent / 'nodes' / '.env'
+load_dotenv(dotenv_path=env_path)
+
+# Verify environment variables loaded
+print("="*60)
+print("🔍 ENVIRONMENT VARIABLES CHECK")
+print("="*60)
+print(f"✅ SERP_API_KEY loaded: {bool(os.getenv('SERP_API_KEY'))}")
+print(f"✅ GOOGLE_API_KEY loaded: {bool(os.getenv('GOOGLE_API_KEY'))}")
+if os.getenv('SERP_API_KEY'):
+    print(f"   SERP key preview: {os.getenv('SERP_API_KEY')[:15]}...")
+if os.getenv('GOOGLE_API_KEY'):
+    print(f"   GOOGLE key preview: {os.getenv('GOOGLE_API_KEY')[:15]}...")
+print("="*60)
+
+# NOW import other libraries
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, List, Dict, Any
@@ -8,7 +28,7 @@ import json
 import traceback
 from datetime import datetime
 
-# Import all node modules
+# Import all node modules (AFTER load_dotenv)
 from nodes.intent_classifier import intent_classifier_node
 from nodes.product_extractor import extract_product_names_node
 from nodes.recommendation_agent import recommendation_agent_node
@@ -18,9 +38,6 @@ from nodes.price_agent import price_agent_node
 from nodes.review_agent import review_rating_agent_node
 from nodes.rating_agent import rating_platform_agent_node
 from nodes.analyzer_agent import analyzer_agent_node
-
-# Load environment variables
-load_dotenv()
 
 # Debug logger
 class DebugLogger:
@@ -179,61 +196,62 @@ def main():
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
     
-    # Sidebar for settings
-    with st.sidebar:
-        st.header("⚙️ Settings")
+    # # Sidebar for settings
+    # with st.sidebar:
+    #     st.header("⚙️ Settings")
         
-        # API Key input
-        google_key = st.text_input(
-            "Google API Key (Gemini)",
-            type="password",
-            value=os.getenv("GOOGLE_API_KEY", ""),
-            help="Enter your Google API key for Gemini"
-        )
+    #     # API Key input
+    #     google_key = st.text_input(
+    #         "Google API Key (Gemini)",
+    #         type="password",
+    #         value=os.getenv("GOOGLE_API_KEY", ""),
+    #         help="Enter your Google API key for Gemini"
+    #     )
         
-        serp_key = st.text_input(
-            "SERP API Key", 
-            type="password",
-            value=os.getenv("SERP_API_KEY", ""),
-            help="Enter your SERP API key for web search"
-        )
+    #     serp_key = st.text_input(
+    #         "SERP API Key", 
+    #         type="password",
+    #         value=os.getenv("SERP_API_KEY", ""),
+    #         help="Enter your SERP API key for web search"
+    #     )
         
-        if st.button("Update Keys"):
-            os.environ["GOOGLE_API_KEY"] = google_key
-            os.environ["SERP_API_KEY"] = serp_key
-            if hasattr(st.session_state, 'workflow'):
-                del st.session_state.workflow
-            st.success("Keys updated!")
-            st.rerun()
+    #     if st.button("Update Keys"):
+    #         os.environ["GOOGLE_API_KEY"] = google_key
+    #         os.environ["SERP_API_KEY"] = serp_key
+    #         if hasattr(st.session_state, 'workflow'):
+    #             del st.session_state.workflow
+    #         st.success("Keys updated!")
+    #         st.rerun()
         
-        st.markdown("---")
+    #     st.markdown("---")
         
-        # Debug toggle
-        show_debug = st.checkbox("Show Debug Panel", value=True)
+    #     # Debug toggle
+    #     show_debug = st.checkbox("Show Debug Panel", value=True)
         
-        st.markdown("---")
-        st.markdown("### 📝 Example Queries")
-        st.markdown("""
-        - "Recommend a good smartphone under $500"
-        - "Compare iPhone 15 vs Samsung Galaxy S24"
-        - "I need a laptop for programming"
-        - "Find the best wireless earbuds"
-        """)
+    #     st.markdown("---")
+    #     st.markdown("### 📝 Example Queries")
+    #     st.markdown("""
+    #     - "Recommend a good smartphone under $500"
+    #     - "Compare iPhone 15 vs Samsung Galaxy S24"
+    #     - "I need a laptop for programming"
+    #     - "Find the best wireless earbuds"
+    #     """)
         
-        st.markdown("---")
-        st.markdown("### 🔍 API Status")
-        st.write(f"Google API: {'✅' if os.getenv('GOOGLE_API_KEY') else '❌'}")
-        st.write(f"SERP API: {'✅' if os.getenv('SERP_API_KEY') else '❌'}")
+    #     st.markdown("---")
+    #     st.markdown("### 🔍 API Status")
+    #     st.write(f"Google API: {'✅' if os.getenv('GOOGLE_API_KEY') else '❌'}")
+    #     st.write(f"SERP API: {'✅' if os.getenv('SERP_API_KEY') else '❌'}")
     
-    # Check API keys
-    if not os.getenv("GOOGLE_API_KEY"):
-        st.warning("⚠️ Please enter your Google API Key in the sidebar to get started!")
-        return
+    # # Check API keys
+    # if not os.getenv("GOOGLE_API_KEY"):
+    #     st.warning("⚠️ Please enter your Google API Key in the sidebar to get started!")
+    #     return
     
-    if not os.getenv("SERP_API_KEY"):
-        st.info("ℹ️ SERP API Key not set. Web search functionality will be limited.")
+    # if not os.getenv("SERP_API_KEY"):
+    #     st.info("ℹ️ SERP API Key not set. Web search functionality will be limited.")
     
     # Main layout
+    show_debug=True
     if show_debug:
         col1, col2 = st.columns([1.5, 1])
     else:

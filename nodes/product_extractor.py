@@ -3,6 +3,13 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import Dict, Any
 import json
 import re
+from dotenv import load_dotenv
+import os
+
+# Load environment variables
+load_dotenv()
+
+# Rest of the code...
 
 def extract_product_names_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
