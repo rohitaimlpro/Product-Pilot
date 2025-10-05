@@ -1,4 +1,4 @@
-# 🛍️ PRODUCT PILOT AI — Product Recommendation System (render deployed application link- https://product-pilot-2.onrender.com/)
+# 🛍️ PRODUCT PILOT AI — Product Recommendation System
 
 An intelligent product recommendation system powered by LangGraph and Google Gemini AI, now featuring a FastAPI backend with a clean HTML, CSS, and JavaScript frontend, and deployed seamlessly on Render.
 
@@ -68,7 +68,7 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
 You can view your deployed app at:
-🔗 https://product-pilot-ai.onrender.com (example)
+🔗 https://product-pilot-2.onrender.com/
 
 ## 📦 Project Structure
 
