@@ -1,4 +1,4 @@
-# 🛍️ PRODUCT PILOT AI — Product Recommendation System
+# 🛍️ PRODUCT PILOT AI — Product Recommendation System (render deployed application link- https://product-pilot-2.onrender.com/)
 
 An intelligent product recommendation system powered by LangGraph and Google Gemini AI, now featuring a FastAPI backend with a clean HTML, CSS, and JavaScript frontend, and deployed seamlessly on Render.
 
