@@ -1,105 +1,107 @@
-# nodes/price_agent.py
-from dotenv import load_dotenv
-import requests
 import os
+import re
+import logging
 
-load_dotenv(override=True)
+from app.core.http_client import cached_get
 
-def fetch_price_results(query: str, max_results: int = 3):
-    print(f"\n{'='*60}")
-    print(f"FETCH_PRICE_RESULTS CALLED")
-    print(f"Query: {query}")
-    print(f"{'='*60}")
-    
-    SERP_API_KEY = os.getenv('SERP_API_KEY')
-    
+logger = logging.getLogger(__name__)
+
+SERP_URL = "https://serpapi.com/search"
+
+
+def fetch_price_results(query: str, max_results: int = 3) -> list:
+    SERP_API_KEY = os.getenv("SERP_API_KEY")
     if not SERP_API_KEY:
-        print("ERROR: No API key found")
+        logger.error("SERP_API_KEY not set")
         return []
-    
-    print(f"API Key: {SERP_API_KEY[:20]}...")
-    
-    url = "https://serpapi.com/search"
+
     params = {
         "engine": "google_shopping",
         "q": query,
         "hl": "en",
         "gl": "IN",
-        "api_key": SERP_API_KEY
+        "api_key": SERP_API_KEY,
     }
-    
-    print(f"Making API request...")
-    
+
     try:
-        response = requests.get(url, params=params, timeout=10)
-        print(f"Response status: {response.status_code}")
-        
-        data = response.json()
-        print(f"Response keys: {list(data.keys())}")
-        
+        data = cached_get(SERP_URL, params)
         results = []
         if "shopping_results" in data:
-            print(f"Found {len(data['shopping_results'])} shopping results")
             for item in data["shopping_results"][:max_results]:
-                title = item.get("title", "No Title")
-                price = item.get("price", "Not Found")
-                link = item.get("link", "No URL")
-                store = item.get("source", "Unknown")
-                
                 results.append({
-                    "store": store,
-                    "title": title.strip(),
-                    "price": price.strip(),
-                    "url": link
+                    "store": item.get("source", "Unknown"),
+                    "title": item.get("title", "").strip(),
+                    "price": item.get("price", "Not Found").strip(),
+                    "url": item.get("link", ""),
                 })
-            print(f"Returning {len(results)} results")
-        else:
-            print("No shopping_results key in response")
-        
+        logger.info("Found %d price results for: %s", len(results), query)
         return results
+
     except Exception as e:
-        print(f"ERROR: {e}")
+        logger.error("Price fetch error for %s: %s", query, e)
         return []
 
+
+def extract_numeric_price(price_text: str) -> int | None:
+    if not price_text:
+        return None
+    match = re.search(r"[\d,]+", price_text.replace(",", ""))
+    if match:
+        try:
+            return int(match.group().replace(",", ""))
+        except ValueError:
+            return None
+    return None
+
+
+def estimate_price_quality(price_list: list) -> tuple:
+    if not price_list:
+        return "low", None
+    numeric_prices = [extract_numeric_price(item.get("price", "")) for item in price_list]
+    numeric_prices = [p for p in numeric_prices if p]
+    if not numeric_prices:
+        return "low", None
+    confidence = (
+        "high" if len(numeric_prices) >= 3
+        else "medium" if len(numeric_prices) >= 2
+        else "low"
+    )
+    return confidence, {"min_price": min(numeric_prices), "max_price": max(numeric_prices)}
+
+
 def price_agent_node(state: dict) -> dict:
-    print(f"\n{'#'*60}")
-    print(f"PRICE_AGENT_NODE CALLED")
-    print(f"{'#'*60}")
-    
     product_names = state.get("products", [])
-    print(f"Products: {product_names}")
-    
+
     if not product_names:
-        return {
-            **state,
-            "price_data": [],
-            "current_step": "No products"
-        }
-    
+        logger.warning("No products provided for price collection")
+        return {**state, "price_data": [], "price_available": False,
+                "current_step": "No products for price collection"}
+
     try:
         all_prices = []
-        
         for product in product_names[:3]:
-            print(f"\nProcessing product: {product}")
-            product_prices = fetch_price_results(product)
+            search_query = state.get("search_hints", {}).get(product, product)
+            logger.info("Fetching prices for: %s", search_query)
+            prices = fetch_price_results(search_query)
+            confidence, price_range = estimate_price_quality(prices)
             all_prices.append({
                 "product": product,
-                "prices": product_prices
+                "prices": prices,
+                "price_confidence": confidence,
+                "price_range": price_range,
             })
-        
-        print(f"\nFinal price_data has {len(all_prices)} items")
-        for item in all_prices:
-            print(f"  {item['product']}: {len(item['prices'])} prices")
-        
-        return {
-            **state,
-            "price_data": all_prices,
-            "current_step": f"Price data collected for {len(all_prices)} products"
-        }
+
+        overall_confidence = (
+            "high" if any(p["price_confidence"] == "high" for p in all_prices)
+            else "medium" if any(p["price_confidence"] == "medium" for p in all_prices)
+            else "low"
+        )
+        logger.info("Price data collected (%s confidence)", overall_confidence)
+        return {**state, "price_data": all_prices, "price_available": True,
+                "price_confidence": overall_confidence,
+                "current_step": f"Price data collected ({overall_confidence})"}
+
     except Exception as e:
-        print(f"ERROR in price_agent_node: {e}")
-        return {
-            **state,
-            "price_data": [],
-            "current_step": f"Failed: {str(e)}"
-        }
+        logger.error("Price collection failed: %s", e)
+        return {**state, "price_data": [], "price_available": False,
+                "current_step": f"Price collection failed: {e}"}

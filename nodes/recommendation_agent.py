@@ -1,15 +1,11 @@
 import os
+import logging
+import json
+import requests
 from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import Dict, Any
-import json
-from dotenv import load_dotenv
-import os
-import requests
 
-# Load environment variables
-load_dotenv(override=True)
-
-# Rest of the code...
+logger = logging.getLogger(__name__)
 
 def recommendation_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -54,12 +50,12 @@ def recommendation_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 products = [p.strip() for p in products if p.strip()][:3]
                 
                 if len(products) >= 2:
-                    print(f"✅ SERP API found {len(products)} products: {products}")
+                    logger.info("SERP API found %d products: %s", len(products), products)
                     state["products"] = products
                     state["current_step"] = f"Recommendations generated: {len(products)} products"
                     return state
     except Exception as e:
-        print(f"⚠️ SERP API error: {str(e)}")
+        logger.warning("SERP API error: %s", str(e))
     
     # Initialize LLM
     llm = ChatGoogleGenerativeAI(
@@ -103,12 +99,12 @@ Format: ["Product 1", "Product 2", "Product 3"]"""
             if isinstance(products, list) and len(products) > 0:
                 # Clean product names
                 products = [str(p).strip() for p in products if p]
-                print(f"✅ Recommendation agent generated {len(products)} products: {products}")
+                logger.info("Recommendation agent generated %d products: %s", len(products), products)
             else:
                 raise ValueError("Empty or invalid product list")
         except:
             # Fallback parsing: extract from text
-            print(f"⚠️ JSON parsing failed, attempting text extraction from: {content}")
+            logger.warning("JSON parsing failed, attempting text extraction from: %s", content[:200])
             
             # Try to extract product names from response
             import re
@@ -123,12 +119,12 @@ Format: ["Product 1", "Product 2", "Product 3"]"""
             
             if not products:
                 # Ultimate fallback based on query keywords
-                print("⚠️ No products extracted, using intelligent fallback")
+                logger.warning("No products extracted, using intelligent fallback")
                 products = generate_fallback_products(user_input)
         
         # Ensure we have at least 2 products
         if len(products) < 2:
-            print(f"⚠️ Only {len(products)} product(s) found, adding fallbacks")
+            logger.warning("Only %d product(s) found, adding fallbacks", len(products))
             products.extend(generate_fallback_products(user_input, exclude=products))
             products = products[:3]  # Limit to 3
         
@@ -136,10 +132,10 @@ Format: ["Product 1", "Product 2", "Product 3"]"""
         state["products"] = products
         state["current_step"] = f"Recommendations generated: {len(products)} products"
         
-        print(f"✅ Final products: {products}")
+        logger.info("Final products: %s", products)
         
     except Exception as e:
-        print(f"❌ Error in recommendation agent: {str(e)}")
+        logger.error("Error in recommendation agent: %s", str(e))
         # Generate fallback products based on query
         state["products"] = generate_fallback_products(user_input)
         state["current_step"] = f"Recommendation error (using fallbacks): {str(e)}"

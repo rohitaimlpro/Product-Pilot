@@ -1,15 +1,11 @@
 import os
-from langchain_google_genai import ChatGoogleGenerativeAI
-from typing import Dict, Any
+import logging
 import json
 import re
-from dotenv import load_dotenv
-import os
+from langchain_google_genai import ChatGoogleGenerativeAI
+from typing import Dict, Any
 
-# Load environment variables
-load_dotenv()
-
-# Rest of the code...
+logger = logging.getLogger(__name__)
 
 def extract_product_names_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -62,32 +58,32 @@ Format: ["Product 1", "Product 2"]"""
             products = json.loads(content)
             if isinstance(products, list) and len(products) > 0:
                 products = [str(p).strip() for p in products if p]
-                print(f"✅ Extracted {len(products)} products: {products}")
+                logger.info("Extracted %d products: %s", len(products), products)
             else:
                 raise ValueError("Empty or invalid product list")
         except:
             # Fallback parsing
-            print(f"⚠️ JSON parsing failed, attempting text extraction from: {content}")
+            logger.warning("JSON parsing failed, attempting text extraction from: %s", content[:200])
             products = fallback_product_extraction(user_input, content)
         
         # If still no products, use regex-based extraction
         if not products or len(products) == 0:
-            print("⚠️ LLM extraction failed, using regex fallback")
+            logger.warning("LLM extraction failed, using regex fallback")
             products = regex_product_extraction(user_input)
         
         # Ensure we have at least 2 products for comparison
         if len(products) < 2:
-            print(f"⚠️ Only {len(products)} product(s) found, attempting enhanced extraction")
+            logger.warning("Only %d product(s) found, attempting enhanced extraction", len(products))
             products = enhanced_extraction(user_input)
         
         # Update state
         state["products"] = products
         state["current_step"] = f"Products extracted: {len(products)} items"
         
-        print(f"✅ Final extracted products: {products}")
+        logger.info("Final extracted products: %s", products)
         
     except Exception as e:
-        print(f"❌ Error in product extraction: {str(e)}")
+        logger.error("Error in product extraction: %s", str(e))
         # Last resort: regex extraction
         state["products"] = regex_product_extraction(user_input)
         state["current_step"] = f"Product extraction error (using fallback): {str(e)}"

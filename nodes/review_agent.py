@@ -1,136 +1,136 @@
-# nodes/review_agent.py - FIXED
-from dotenv import load_dotenv
 import os
-import requests
+import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# Load environment variables
-load_dotenv(override=True)
+from app.core.http_client import cached_get
+
+logger = logging.getLogger(__name__)
+
+SERP_URL = "https://serpapi.com/search"
+
+_llm = None
 
 def get_llm():
-    return ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp",
-        temperature=0.1,
-        google_api_key=os.getenv("GOOGLE_API_KEY")
-    )
+    global _llm
+    if _llm is None:
+        _llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            temperature=0.1,
+            google_api_key=os.getenv("GOOGLE_API_KEY")
+        )
+    return _llm
 
-def fetch_review_snippets(query):
-    """Fetch review snippets for a product from Google Search via SerpAPI."""
-    SERP_API_KEY = os.getenv('SERP_API_KEY')
-    
+
+def fetch_review_snippets(query: str) -> list:
+    SERP_API_KEY = os.getenv("SERP_API_KEY")
     if not SERP_API_KEY:
-        print(f"❌ SERP_API_KEY not found in review_agent for query: {query}")
+        logger.error("SERP_API_KEY not set")
         return []
-    
-    url = "https://serpapi.com/search"
+
     params = {
         "engine": "google",
-        "q": query + " user reviews",
+        "q": query + " user reviews experience",
         "hl": "en",
         "gl": "IN",
-        "api_key": SERP_API_KEY
+        "api_key": SERP_API_KEY,
     }
-    
+
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
+        data = cached_get(SERP_URL, params)
         snippets = []
         if "organic_results" in data:
             for result in data["organic_results"][:5]:
                 snippet = result.get("snippet", "")
                 if snippet:
                     snippets.append(snippet)
-        
-        print(f"✅ Found {len(snippets)} review snippets for {query}")
+        logger.info("Found %d review snippets for: %s", len(snippets), query)
         return snippets
+
     except Exception as e:
-        print(f"❌ Error fetching reviews for {query}: {str(e)}")
+        logger.error("Review fetch error for %s: %s", query, e)
         return []
 
-def classify_reviews_with_llm(snippets, llm):
-    """Classify reviews as positive or negative using an LLM."""
-    
+
+def classify_reviews_with_llm(snippets: list, llm) -> dict:
     if not snippets:
-        return {"positive_reviews": [], "negative_reviews": []}
-    
+        return {"positive_reviews": [], "negative_reviews": [],
+                "review_sentiment": "unknown", "review_confidence": "low"}
+
     try:
-        combined_snippets = "\n---\n".join(snippets[:5])
-        
-        prompt = f"""
-        Analyze these review snippets and categorize them as positive or negative:
-        
-        {combined_snippets}
-        
-        Return your analysis in this format:
-        POSITIVE:
-        - [positive points]
-        
-        NEGATIVE:
-        - [negative points]
-        """
-        
+        combined = "\n---\n".join(snippets[:5])
+        prompt = f"""Analyze these product review snippets.
+
+{combined}
+
+Return strictly:
+
+POSITIVE:
+- points
+
+NEGATIVE:
+- points"""
+
         result = llm.invoke(prompt)
-        response_text = result.content if hasattr(result, 'content') else str(result)
-        
-        positive_reviews = []
-        negative_reviews = []
-        
-        if "POSITIVE:" in response_text:
-            pos_section = response_text.split("POSITIVE:")[1].split("NEGATIVE:")[0]
-            positive_reviews = [line.strip("- ").strip() for line in pos_section.split("\n") if line.strip().startswith("-")]
-        
-        if "NEGATIVE:" in response_text:
-            neg_section = response_text.split("NEGATIVE:")[1]
-            negative_reviews = [line.strip("- ").strip() for line in neg_section.split("\n") if line.strip().startswith("-")]
-        
-        return {
-            "positive_reviews": positive_reviews[:3],
-            "negative_reviews": negative_reviews[:3]
-        }
+        text = result.content if hasattr(result, "content") else str(result)
+
+        positive_reviews, negative_reviews = [], []
+
+        if "POSITIVE:" in text:
+            pos_section = text.split("POSITIVE:")[1].split("NEGATIVE:")[0]
+            positive_reviews = [
+                line.strip("- ").strip()
+                for line in pos_section.split("\n")
+                if line.strip().startswith("-")
+            ][:3]
+
+        if "NEGATIVE:" in text:
+            neg_section = text.split("NEGATIVE:")[1]
+            negative_reviews = [
+                line.strip("- ").strip()
+                for line in neg_section.split("\n")
+                if line.strip().startswith("-")
+            ][:3]
+
+        total = len(positive_reviews) + len(negative_reviews)
+        sentiment = (
+            "positive" if len(positive_reviews) > len(negative_reviews)
+            else "negative" if len(negative_reviews) > len(positive_reviews)
+            else "mixed"
+        )
+        confidence = "high" if total >= 4 else "medium" if total >= 2 else "low"
+
+        return {"positive_reviews": positive_reviews, "negative_reviews": negative_reviews,
+                "review_sentiment": sentiment, "review_confidence": confidence}
+
     except Exception as e:
-        print(f"❌ Error classifying reviews: {str(e)}")
-        return {"positive_reviews": [], "negative_reviews": []}
+        logger.error("Review classification error: %s", e)
+        return {"positive_reviews": [], "negative_reviews": [],
+                "review_sentiment": "unknown", "review_confidence": "low"}
+
 
 def review_rating_agent_node(state: dict) -> dict:
-    """
-    LangGraph-style node that processes a list of products and fetches review info
-    """
     product_names = state.get("products", [])
-    
+
     if not product_names:
-        print("⚠️ No products to fetch reviews for")
-        return {
-            **state,
-            "review_data": [],
-            "current_step": "No products for review collection"
-        }
-    
+        logger.warning("No products provided for review collection")
+        return {**state, "review_data": [], "review_available": False,
+                "current_step": "No products for review collection"}
+
     try:
         llm = get_llm()
         review_data = []
-        
         for product in product_names[:3]:
-            print(f"🔍 Fetching reviews for: {product}")
-            snippets = fetch_review_snippets(product)
-            classified_reviews = classify_reviews_with_llm(snippets, llm)
-            
-            review_data.append({
-                "product": product,
-                "reviews": classified_reviews
-            })
-        
-        print(f"✅ Review data collected for {len(review_data)} products")
-        return {
-            **state,
-            "review_data": review_data,
-            "current_step": f"Review data collected for {len(review_data)} products"
-        }
+            search_query = state.get("search_hints", {}).get(product, product)
+            logger.info("Fetching reviews for: %s", search_query)
+            snippets = fetch_review_snippets(search_query)
+            classified = classify_reviews_with_llm(snippets, llm)
+            review_data.append({"product": product, "reviews": classified})
+
+        logger.info("Review data collected for %d products", len(review_data))
+        return {**state, "review_data": review_data, "review_available": True,
+                "current_step": f"Review data collected for {len(review_data)} products"}
+
     except Exception as e:
-        print(f"❌ Review collection failed: {str(e)}")
-        return {
-            **state,
-            "review_data": [],
-            "current_step": f"Review collection failed: {str(e)}"
-        }
+        logger.error("Review collection failed: %s", e)
+        return {**state, "review_data": [], "review_available": False,
+                "current_step": f"Review collection failed: {e}"}

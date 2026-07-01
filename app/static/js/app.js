@@ -1,4 +1,3 @@
-// DOM Elements
 const chatBox = document.getElementById("chat-box");
 const sendBtn = document.getElementById("send-btn");
 const userQuery = document.getElementById("user-query");
@@ -7,147 +6,170 @@ const statusDiv = document.getElementById("status");
 const emptyState = document.getElementById("empty-state");
 const typingIndicator = document.getElementById("typing-indicator");
 
-/**
- * Format markdown-like text to HTML
- * @param {string} text - The text to format
- * @returns {string} - Formatted HTML
- */
-function formatText(text) {
-    // Convert ### headers to h3
-    text = text.replace(/###\s+(.+)/g, '<h3>$1</h3>');
-    
-    // Convert #### headers to h4
-    text = text.replace(/####\s+(.+)/g, '<h4>$1</h4>');
-    
-    // Convert **bold** to strong
+// ── Inline formatting (bold, italic, code) ──────────────────────────
+function inline(text) {
+    // Bold first so ** doesn't get caught by italic regex
     text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    
-    // Convert *italic* to em
-    text = text.replace(/\*(.+?)\*\*/g, '<em>$1</em>');
-    
-    // Convert --- to hr
-    text = text.replace(/^---$/gm, '<hr>');
-    
-    // Convert bullet points
-    text = text.replace(/^\* (.+)/gm, '<li>$1</li>');
-    
-    // Wrap consecutive <li> in <ul>
-    text = text.replace(/(<li>.*?<\/li>\s*)+/gs, '<ul>$&</ul>');
-    
-    // Convert line breaks to paragraphs
-    const lines = text.split('\n');
-    let formatted = '';
-    let inParagraph = false;
-    
-    for (let line of lines) {
-        line = line.trim();
-        
-        if (line.startsWith('<h3>') || line.startsWith('<h4>') || 
-            line.startsWith('<ul>') || line.startsWith('<hr>') || line === '') {
-            if (inParagraph) {
-                formatted += '</p>';
-                inParagraph = false;
-            }
-            formatted += line + '\n';
-        } else if (line.startsWith('<li>') || line.startsWith('</ul>')) {
-            formatted += line + '\n';
+    // Italic: single * not adjacent to another *
+    text = text.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+    // Inline code
+    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+    return text;
+}
+
+// ── Table builder ────────────────────────────────────────────────────
+function buildTable(rows) {
+    const isSeparator = row => /^\|[\s\-:|]+\|/.test(row);
+    let html = '<div class="table-wrapper"><table>';
+    let headerDone = false;
+
+    for (let j = 0; j < rows.length; j++) {
+        if (isSeparator(rows[j])) {
+            html += '</thead><tbody>';
+            headerDone = true;
+            continue;
+        }
+
+        const cells = rows[j].split('|').slice(1, -1).map(c => c.trim());
+
+        if (!headerDone) {
+            html += j === 0 ? '<thead><tr>' : '<tr>';
+            cells.forEach(c => { html += `<th>${inline(c)}</th>`; });
+            html += '</tr>';
         } else {
-            if (!inParagraph && line !== '') {
-                formatted += '<p>';
-                inParagraph = true;
-            }
-            formatted += line + ' ';
+            html += '<tr>';
+            cells.forEach(c => { html += `<td>${inline(c)}</td>`; });
+            html += '</tr>';
         }
     }
-    
-    if (inParagraph) {
-        formatted += '</p>';
+
+    if (!headerDone) html += '</thead>';
+    html += '</tbody></table></div>';
+    return html;
+}
+
+// ── Main formatter (block-level parsing) ────────────────────────────
+function formatText(text) {
+    const lines = text.split('\n');
+    let html = '';
+    let i = 0;
+
+    while (i < lines.length) {
+        const trimmed = lines[i].trim();
+
+        if (!trimmed) { i++; continue; }
+
+        // H3
+        if (trimmed.startsWith('### ')) {
+            html += `<h3>${inline(trimmed.slice(4))}</h3>`;
+            i++; continue;
+        }
+
+        // H4
+        if (trimmed.startsWith('#### ')) {
+            html += `<h4>${inline(trimmed.slice(5))}</h4>`;
+            i++; continue;
+        }
+
+        // HR
+        if (trimmed === '---') {
+            html += '<hr>';
+            i++; continue;
+        }
+
+        // Markdown table
+        if (trimmed.startsWith('|')) {
+            const rows = [];
+            while (i < lines.length && lines[i].trim().startsWith('|')) {
+                rows.push(lines[i].trim());
+                i++;
+            }
+            html += buildTable(rows);
+            continue;
+        }
+
+        // Unordered list (* or -)
+        if (/^[*-]\s/.test(trimmed)) {
+            html += '<ul>';
+            while (i < lines.length && /^\s*[*-]\s/.test(lines[i])) {
+                const item = lines[i].trim().replace(/^[*-]\s/, '');
+                html += `<li>${inline(item)}</li>`;
+                i++;
+            }
+            html += '</ul>';
+            continue;
+        }
+
+        // Ordered list (1. 2. 3.)
+        if (/^\d+\.\s/.test(trimmed)) {
+            html += '<ol>';
+            while (i < lines.length && /^\s*\d+\.\s/.test(lines[i])) {
+                const item = lines[i].trim().replace(/^\d+\.\s/, '');
+                html += `<li>${inline(item)}</li>`;
+                i++;
+            }
+            html += '</ol>';
+            continue;
+        }
+
+        // Regular paragraph
+        html += `<p>${inline(trimmed)}</p>`;
+        i++;
     }
-    
-    return formatted;
+
+    return html;
 }
 
-/**
- * Check if message needs formatting
- * @param {string} message - The message text
- * @returns {boolean} - Whether message contains markdown
- */
 function needsFormatting(message) {
-    return message.includes('###') || 
-           message.includes('####') || 
-           message.includes('**') || 
+    return message.includes('###') ||
+           message.includes('**') ||
            message.includes('* ') ||
-           message.includes('---');
+           message.includes('- ') ||
+           message.includes('|') ||
+           /^\d+\.\s/m.test(message);
 }
 
-/**
- * Add a message to the chat box
- * @param {string} message - The message text
- * @param {string} sender - Either 'user' or 'bot'
- */
+// ── Chat UI helpers ──────────────────────────────────────────────────
 function addMessage(message, sender) {
-    // Hide empty state if it's visible
     if (emptyState.style.display !== 'none') {
         emptyState.style.display = 'none';
     }
 
-    // Create message elements
     const msgDiv = document.createElement("div");
     msgDiv.classList.add("chat-message", sender);
-    
+
     const contentDiv = document.createElement("div");
     contentDiv.classList.add("message-content");
-    
-    // Format bot messages if they contain markdown
+
     if (sender === 'bot' && needsFormatting(message)) {
         contentDiv.classList.add("formatted");
         contentDiv.innerHTML = formatText(message);
     } else {
         contentDiv.innerText = message;
     }
-    
+
     msgDiv.appendChild(contentDiv);
-    
-    // Insert before typing indicator
     chatBox.insertBefore(msgDiv, typingIndicator);
-    
-    // Scroll to bottom
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-/**
- * Show status message with appropriate styling
- * @param {string} message - The status message
- * @param {string} type - Status type: 'success', 'error', or 'processing'
- */
 function showStatus(message, type) {
     statusDiv.className = 'status ' + type;
     statusDiv.innerText = message;
     statusDiv.style.display = 'block';
 }
 
-/**
- * Hide the status message
- */
 function hideStatus() {
     statusDiv.style.display = 'none';
 }
 
-/**
- * Enable/disable the send button
- * @param {boolean} enabled - Whether the button should be enabled
- */
 function setSendButtonState(enabled) {
     sendBtn.disabled = !enabled;
-    sendBtn.innerHTML = enabled 
+    sendBtn.innerHTML = enabled
         ? '<span class="button-text">Get Recommendations</span>'
         : '<span class="button-text">Processing...</span>';
 }
 
-/**
- * Show/hide typing indicator
- * @param {boolean} show - Whether to show the indicator
- */
 function showTypingIndicator(show) {
     if (show) {
         typingIndicator.classList.add('active');
@@ -157,78 +179,57 @@ function showTypingIndicator(show) {
     }
 }
 
-/**
- * Handle sending the query to the backend
- */
+// ── Main query handler ───────────────────────────────────────────────
 async function handleSendQuery() {
     const query = userQuery.value.trim();
     const email = userEmail.value.trim();
 
-    // Validate input
     if (!query) {
         showStatus("Please enter a query.", "error");
         return;
     }
 
-    // Add user message to chat
     addMessage(query, "user");
     userQuery.value = "";
-    
-    // Update UI state
     setSendButtonState(false);
     showTypingIndicator(true);
-    showStatus("Processing your request...", "processing");
+    showStatus("Analyzing products... this takes about 60 seconds.", "processing");
 
     try {
-        // Make API request
         const response = await fetch("/api/query", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ query: query, email: email })
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query, email })
         });
 
         const data = await response.json();
         showTypingIndicator(false);
 
-        // Handle response
         if (data.success) {
             addMessage(data.recommendation, "bot");
-            
-            if (email) {
-                showStatus("✓ Recommendation sent to " + email + "!", "success");
-            } else {
-                showStatus("✓ Recommendation generated successfully!", "success");
-            }
+            showStatus("Recommendation ready!", "success");
         } else {
             showStatus("Failed to get recommendation. Please try again.", "error");
         }
-
     } catch (err) {
-        console.error("Error processing query:", err);
+        console.error("Error:", err);
         showTypingIndicator(false);
-        showStatus("Error occurred while processing. Please try again.", "error");
+        showStatus("Error occurred. Please try again.", "error");
     } finally {
-        // Re-enable send button
         setSendButtonState(true);
     }
 }
 
-// Event Listeners
+// ── Event listeners ──────────────────────────────────────────────────
 sendBtn.addEventListener("click", handleSendQuery);
 
-// Allow Enter to send (Shift+Enter for new line)
-userQuery.addEventListener("keydown", function(e) {
+userQuery.addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         sendBtn.click();
     }
 });
 
-// Optional: Clear status message when user starts typing
-userQuery.addEventListener("input", function() {
-    if (statusDiv.classList.contains('error')) {
-        hideStatus();
-    }
+userQuery.addEventListener("input", function () {
+    if (statusDiv.classList.contains('error')) hideStatus();
 });

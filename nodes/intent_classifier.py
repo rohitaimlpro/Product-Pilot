@@ -1,6 +1,9 @@
 import os
+import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 def intent_classifier_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -59,14 +62,14 @@ No explanation, no additional text, just the intent."""
             else:
                 intent = "recommendation"
         
-        print(f"✅ Intent classified as: {intent}")
+        logger.info("Intent classified as: %s", intent)
         
         # Update state
         state["intent"] = intent
         state["current_step"] = f"Intent classified: {intent}"
         
     except Exception as e:
-        print(f"❌ Error in intent classification: {str(e)}")
+        logger.error("Error in intent classification: %s", str(e))
         # Default to recommendation on error
         state["intent"] = "recommendation"
         state["current_step"] = f"Intent classification error (defaulted to recommendation): {str(e)}"

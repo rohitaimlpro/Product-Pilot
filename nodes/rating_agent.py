@@ -1,92 +1,100 @@
-# nodes/rating_agent.py - FIXED
-from dotenv import load_dotenv
 import os
-import requests
+import logging
 
-# Load environment variables
-load_dotenv(override=True)
+from app.core.http_client import cached_get
 
-def fetch_platform_ratings(product_name: str, max_results: int = 3):
-    """Fetches rating and review count from Google Shopping results."""
-    SERP_API_KEY = os.getenv('SERP_API_KEY')
-    
+logger = logging.getLogger(__name__)
+
+SERP_URL = "https://serpapi.com/search"
+
+
+def fetch_platform_ratings(query: str, max_results: int = 3) -> list:
+    SERP_API_KEY = os.getenv("SERP_API_KEY")
     if not SERP_API_KEY:
-        print(f"❌ SERP_API_KEY not found in rating_agent for: {product_name}")
+        logger.error("SERP_API_KEY not set")
         return []
-    
-    url = "https://serpapi.com/search"
+
     params = {
         "engine": "google_shopping",
-        "q": product_name,
+        "q": query,
         "hl": "en",
         "gl": "IN",
-        "api_key": SERP_API_KEY
+        "api_key": SERP_API_KEY,
     }
-    
+
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
+        data = cached_get(SERP_URL, params)
         ratings_info = []
-        
         if "shopping_results" in data:
             for item in data["shopping_results"][:max_results]:
-                title = item.get("title", "No Title")
-                link = item.get("link", "")
-                source = item.get("source", "Unknown Store")
-                rating = item.get("rating", "N/A")
-                reviews_count = item.get("reviews", "N/A")
-                
                 ratings_info.append({
-                    "platform": source,
-                    "title": title,
-                    "rating": rating,
-                    "total_reviews": reviews_count,
-                    "platform_url": link
+                    "platform": item.get("source", "Unknown Store"),
+                    "title": item.get("title", ""),
+                    "rating": item.get("rating", "N/A"),
+                    "total_reviews": item.get("reviews", "N/A"),
+                    "platform_url": item.get("link", ""),
                 })
-        
-        print(f"✅ Found {len(ratings_info)} ratings for {product_name}")
+        logger.info("Found %d ratings for: %s", len(ratings_info), query)
         return ratings_info
+
     except Exception as e:
-        print(f"❌ Error fetching ratings for {product_name}: {str(e)}")
+        logger.error("Rating fetch error for %s: %s", query, e)
         return []
 
+
+def estimate_rating_quality(ratings: list) -> tuple:
+    if not ratings:
+        return "low", None
+    numeric_ratings = []
+    for r in ratings:
+        try:
+            numeric_ratings.append(float(r.get("rating")))
+        except (TypeError, ValueError):
+            continue
+    if not numeric_ratings:
+        return "low", None
+    avg = round(sum(numeric_ratings) / len(numeric_ratings), 2)
+    confidence = (
+        "high" if len(numeric_ratings) >= 3
+        else "medium" if len(numeric_ratings) >= 2
+        else "low"
+    )
+    return confidence, avg
+
+
 def rating_platform_agent_node(state: dict) -> dict:
-    """
-    LangGraph-style node that fetches rating and review count from multiple platforms.
-    """
     product_names = state.get("products", [])
-    
+
     if not product_names:
-        print("⚠️ No products to fetch ratings for")
-        return {
-            **state,
-            "platform_rating_data": [],
-            "current_step": "No products for rating collection"
-        }
-    
+        logger.warning("No products provided for rating collection")
+        return {**state, "platform_rating_data": [], "rating_available": False,
+                "current_step": "No products for rating collection"}
+
     try:
         platform_ratings = []
-        
         for product in product_names[:3]:
-            print(f"🔍 Fetching ratings for: {product}")
-            ratings = fetch_platform_ratings(product)
+            search_query = state.get("search_hints", {}).get(product, product)
+            logger.info("Fetching ratings for: %s", search_query)
+            ratings = fetch_platform_ratings(search_query)
+            confidence, avg_rating = estimate_rating_quality(ratings)
             platform_ratings.append({
                 "product": product,
-                "ratings": ratings
+                "ratings": ratings,
+                "rating_confidence": confidence,
+                "average_rating": avg_rating,
             })
-        
-        print(f"✅ Rating data collected for {len(platform_ratings)} products")
-        return {
-            **state,
-            "platform_rating_data": platform_ratings,
-            "current_step": f"Rating data collected for {len(platform_ratings)} products"
-        }
+
+        overall_confidence = (
+            "high" if any(p["rating_confidence"] == "high" for p in platform_ratings)
+            else "medium" if any(p["rating_confidence"] == "medium" for p in platform_ratings)
+            else "low"
+        )
+        logger.info("Rating data collected (%s confidence)", overall_confidence)
+        return {**state, "platform_rating_data": platform_ratings, "rating_available": True,
+                "rating_confidence": overall_confidence,
+                "current_step": f"Rating data collected ({overall_confidence})"}
+
     except Exception as e:
-        print(f"❌ Rating collection failed: {str(e)}")
-        return {
-            **state,
-            "platform_rating_data": [],
-            "current_step": f"Rating collection failed: {str(e)}"
-        }
+        logger.error("Rating collection failed: %s", e)
+        return {**state, "platform_rating_data": [], "rating_available": False,
+                "current_step": f"Rating collection failed: {e}"}
