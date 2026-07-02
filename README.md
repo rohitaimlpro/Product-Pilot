@@ -2,7 +2,7 @@
 
 # 🤖 Product Pilot — Multi-Agent AI Product Recommendation System
 
-**An intelligent product research assistant powered by LangGraph, Google Gemini 2.5 Flash, and SerpAPI.**  
+**An intelligent product research assistant powered by LangGraph, Google Gemini 2.5 Flash, and SerpAPI.**
 Ask in plain English. Get structured, data-backed product recommendations in seconds.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
@@ -19,118 +19,123 @@ Ask in plain English. Get structured, data-backed product recommendations in sec
 
 ## What It Does
 
-Type a natural language query like *"which is more affordable iPhone 14 Pro Max or iPhone 15"* or *"compare Samsung S24 vs iPhone 15"* — Product Pilot intelligently routes the query through a pipeline of specialized AI agents, fetches real-time data from the web, and returns a structured comparison with prices, specs, reviews, and ratings.
+Type a natural language query like *"which is more affordable iPhone 14 Pro Max or iPhone 15"* or *"compare Samsung S24 vs iPhone 15"* — Product Pilot routes it through a 3-node LangGraph pipeline, fetches real-time data via SerpAPI, and returns a structured comparison with prices, specs, reviews, and ratings.
 
 ---
 
-## System Architecture
+## Architecture
 
 ```
-╔══════════════════════════════════════════════════════════════════════╗
-║                        USER QUERY (Natural Language)                 ║
-╚══════════════════════════╦═══════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════╗
+║                   USER QUERY (Natural Language)                  ║
+╚══════════════════════════╦═══════════════════════════════════════╝
                            │
-                    ┌──────▼──────┐
-                    │   Intent    │  ← Classifies: compare / recommend
-                    │  Classifier │     / specs / price / reviews
-                    └──────┬──────┘
+          ┌────────────────▼─────────────────┐
+          │         SUPERVISOR NODE           │
+          │         (1 LLM call)              │
+          │                                   │
+          │  ① Parse: intent + products       │
+          │  ② Plan: minimum agents needed    │
+          │                                   │
+          │  recommendation? → call rec_agent │
+          │  comparison?     → products ready │
+          │                                   │
+          │  ③ PARALLEL EXECUTE               │
+          │  ┌──────────┬──────────┐          │
+          │  │price_agent│info_agent│ (only   │
+          │  ├──────────┼──────────┤  agents  │
+          │  │review_ag │rating_ag │  needed) │
+          │  └──────────┴──────────┘          │
+          │  each: ACT → OBSERVE → RETRY      │
+          └────────────────┬─────────────────┘
                            │
-                    ┌──────▼──────┐
-                    │   Product   │  ← Extracts product names from
-                    │  Extractor  │     the raw query string
-                    └──────┬──────┘
+          ┌────────────────▼─────────────────┐
+          │      REFLECT & SCORE NODE         │
+          │         (1 LLM call)              │
+          │                                   │
+          │  • Scores data confidence (1-10)  │
+          │  • Writes quality reflection      │
+          │  • score < 7 → fallback agent     │
+          └────────────────┬─────────────────┘
                            │
-              ┌────────────▼────────────┐
-              │     SUPERVISOR AGENT    │
-              │  ┌─────────────────┐    │
-              │  │  PLAN (1 LLM    │    │  ← Selects MINIMUM agents
-              │  │  call): picks   │    │     needed for the query
-              │  │  agents needed  │    │
-              │  └────────┬────────┘    │
-              │           │ PARALLEL    │
-              │   ┌───────┼───────┐    │
-              └───┼───────┼───────┼────┘
-                  │       │       │
-          ┌───────▼──┐ ┌──▼───┐ ┌▼────────┐ ┌──────────┐
-          │  Price   │ │ Info │ │ Review  │ │  Rating  │
-          │  Agent   │ │Agent │ │  Agent  │ │  Agent   │
-          │          │ │      │ │         │ │          │
-          │ Prices & │ │Specs,│ │  Pros,  │ │ Platform │
-          │  Deals   │ │Feats │ │  Cons,  │ │ Ratings  │
-          └────┬─────┘ └──┬───┘ └───┬─────┘ └────┬─────┘
-               │           │         │              │
-               └───────────┴────┬────┴──────────────┘
-                                │  (each agent runs ACT→OBSERVE→RETRY)
-                    ┌───────────▼───────────┐
-                    │    CONFIDENCE CHECK    │  ← Score < 7 triggers
-                    │       (1 – 10)         │    fallback agent
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │    REFLECTION NODE     │  ← Reviews data quality
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │    ANALYZER AGENT      │  ← Synthesizes everything
-                    └───────────┬───────────┘    into final answer
-                                │
-                    ┌───────────▼───────────┐
-                    │  STRUCTURED RESPONSE   │
-                    └───────────────────────┘
+          ┌────────────────▼─────────────────┐
+          │         ANALYZER NODE             │
+          │         (1 LLM call)              │
+          │                                   │
+          │  Synthesizes all collected data   │
+          │  into final structured response   │
+          └────────────────┬─────────────────┘
+                           │
+          ╔════════════════▼═════════════════╗
+          ║      STRUCTURED RECOMMENDATION   ║
+          ╚══════════════════════════════════╝
 ```
+
+**LangGraph graph — 3 nodes, straight line:**
+```
+supervisor ──► reflect_and_score ──► analyzer ──► END
+```
+
+---
+
+## Performance
+
+| Query Type | Agents Run | Response Time | Confidence |
+|---|---|---|---|
+| `"which is more affordable iPhone 14 Pro Max or iPhone 15"` | 1 | **12s** | 9/10 |
+| `"compare specs and price of OnePlus 12 vs Pixel 8"` | 2 | **23s** | 9/10 |
+| `"compare Samsung Galaxy S24 vs iPhone 15"` | 4 | **33s** | 10/10 |
+
+**Latency optimization history:**
+
+| Optimization | LLM Calls | Worst-case latency |
+|---|---|---|
+| Original (sequential agents) | 6 | ~77s |
+| Parallel agent execution | 6 | ~60s |
+| Merged intent+extractor into supervisor | 5 | ~55s |
+| Merged confidence+reflection into one call | 4 | ~50s |
+| Supervisor absorbs query parsing | 3 | ~40s |
+| Reduced analyzer `thinking_budget` 1024→256 | 3 | **~33s** |
 
 ---
 
 ## Key Features
 
-### Selective LLM Planning
-The supervisor makes one LLM call to read the user's intent and selects only the agents actually needed — never more.
+### 3 LLM Calls Per Query
+The entire pipeline runs on exactly 3 Gemini API calls — down from 6 in the original design. Each merged call was a deliberate decision to eliminate redundant LLM round-trips.
 
-| Query Type | Agents Selected |
+```
+Call 1 — Supervisor:        intent + product extraction + agent planning
+Call 2 — Reflect & Score:   confidence scoring (1-10) + quality reflection
+Call 3 — Analyzer:          final synthesis into structured recommendation
+```
+
+### Selective Agent Planning
+The supervisor's LLM call selects only the agents the query actually needs:
+
+| Query Intent | Agents Selected |
 |---|---|
-| `"which is more affordable?"` | `price_agent` only |
+| `"which is cheaper?"` | `price_agent` only |
 | `"compare specs and price"` | `product_info_agent` + `price_agent` |
-| `"which has better reviews and ratings?"` | `review_agent` + `rating_agent` |
+| `"better reviews and ratings?"` | `review_agent` + `rating_agent` |
 | `"compare X vs Y"` (broad) | All 4 agents |
 
 ### Parallel Agent Execution
-All selected agents run simultaneously via `ThreadPoolExecutor`. Wall-clock time = slowest single agent, not the sum.
-
+Selected agents run simultaneously via `ThreadPoolExecutor`:
 ```
-Sequential:  [price 15s] → [info 15s] → [review 15s] → [rating 15s] = 60s
-Parallel:    [price 15s]
-             [info  15s]  ← all run at the same time
-             [review 15s]
-             [rating 15s]                                             = 15s ✅
+Sequential (old): price(15s) + info(15s) + review(15s) + rating(15s) = 60s
+Parallel  (now):  all 4 agents at once                               = 15s ✅
 ```
 
-**Result: 4× latency reduction (60s → 15s)**
+### ACT → OBSERVE → REFORMULATE → RETRY
+Every data agent follows a self-correcting loop:
+1. **ACT** — search SerpAPI for product data
+2. **OBSERVE** — rule-based quality check (high / medium / low)
+3. **REFORMULATE** — LLM generates better search queries on poor results
+4. **RETRY** — re-search with improved queries
 
-### ACT → OBSERVE → REFORMULATE → RETRY Loop
-Every agent follows a self-correcting agentic cycle — not just a one-shot API call:
-
-```
-┌─────────────────────────────────────────────────────┐
-│                   AGENT CYCLE                        │
-│                                                      │
-│  1. ACT          → Search SerpAPI for product data  │
-│  2. OBSERVE      → Rule-based quality check          │
-│                    (high / medium / low confidence)  │
-│  3. REFORMULATE  → LLM generates better queries     │
-│                    (only if quality = low)            │
-│  4. RETRY        → Re-search with improved queries  │
-└─────────────────────────────────────────────────────┘
-```
-
-### Confidence Scoring + Fallback
-After all agents finish, an LLM scores overall data sufficiency from 1–10. If the score falls below 7, a fallback agent is automatically triggered — no manual intervention.
-
-### Optimized Gemini Reasoning
-`thinking_budget` caps prevent unbounded reasoning on large contexts:
-- Analyzer node: `thinking_budget = 1024`
-- Reflection node: `thinking_budget = 512`
-
-**Result: Total response time cut from 290s → 64s**
+### Reflect & Score (Merged Node)
+Replaces two back-to-back LLM calls with one. Returns confidence score + reflection summary together. If score < 7, triggers a fallback agent automatically before passing to analyzer.
 
 ---
 
@@ -138,11 +143,11 @@ After all agents finish, an LLM scores overall data sufficiency from 1–10. If 
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Agent Orchestration | LangGraph (StateGraph) | Graph-based multi-agent workflow |
-| LLM | Google Gemini 2.5 Flash | Planning, reformulation, analysis |
-| Web Search | SerpAPI | Real-time product data from the web |
-| Backend | FastAPI | REST API + HTML template serving |
-| Frontend | Vanilla JS + Jinja2 | Chat UI with real-time markdown rendering |
+| Agent Orchestration | LangGraph (StateGraph) | 3-node graph pipeline |
+| LLM | Google Gemini 2.5 Flash | Planning, scoring, analysis |
+| Web Search | SerpAPI | Real-time product data |
+| Backend | FastAPI | REST API + HTML serving |
+| Frontend | Vanilla JS + Jinja2 | Chat UI + markdown rendering |
 | Parallelism | ThreadPoolExecutor | Concurrent agent execution |
 | Testing | pytest + unittest.mock | 30/30 tests, zero real API calls |
 | Containerization | Docker | Portable deployment |
@@ -154,47 +159,33 @@ After all agents finish, an LLM scores overall data sufficiency from 1–10. If 
 ```
 Product-Pilot/
 │
-├── app/                            # FastAPI application
-│   ├── main.py                     # Entry point, UTF-8 setup, lifespan
-│   ├── api/
-│   │   └── routes.py               # /api/query, /api/health endpoints
-│   ├── core/
-│   │   ├── workflow.py             # LangGraph StateGraph definition
-│   │   ├── http_client.py          # Shared HTTP client
-│   │   └── request_context.py      # Per-request context
-│   ├── models/
-│   │   └── graph_state.py          # Shared state TypedDict
+├── app/
+│   ├── main.py                      # Entry point
+│   ├── api/routes.py                # /api/query, /api/health
+│   ├── core/workflow.py             # LangGraph 3-node graph
+│   ├── models/graph_state.py        # Shared state TypedDict
 │   ├── static/
-│   │   ├── css/style.css           # UI styles + table/list formatting
-│   │   └── js/app.js               # Chat UI + custom markdown parser
-│   └── templates/
-│       └── index.html              # Main chat interface
+│   │   ├── css/style.css            # UI + table styles
+│   │   └── js/app.js                # Chat UI + markdown parser
+│   └── templates/index.html
 │
-├── nodes/                          # LangGraph agent nodes
-│   ├── intent_classifier.py        # Classifies query intent
-│   ├── product_extractor.py        # Extracts product names
-│   ├── supervisor_agent.py         # Orchestrator: plan + parallel exec
-│   ├── product_info_agent.py       # Specs, features, display, camera
-│   ├── price_agent.py              # Retail prices + price quality scorer
-│   ├── review_agent.py             # User reviews, pros/cons
-│   ├── rating_agent.py             # Platform ratings and review counts
-│   ├── reflection_node.py          # Quality review before analysis
-│   └── analyzer_agent.py           # Final synthesis + recommendation
+├── nodes/
+│   ├── supervisor_agent.py          # Entry point: parse + plan + parallel exec
+│   ├── reflect_and_score.py         # Confidence scoring + reflection (1 LLM call)
+│   ├── analyzer_agent.py            # Final synthesis
+│   ├── recommendation_agent.py      # Generates products for open-ended queries
+│   ├── product_info_agent.py        # Specs, features, display, camera
+│   ├── price_agent.py               # Retail prices + quality scorer
+│   ├── review_agent.py              # User reviews, pros/cons
+│   └── rating_agent.py              # Platform ratings and counts
 │
 ├── tests/
-│   └── test_workflow.py            # 30 unit tests (mocked APIs)
+│   └── test_workflow.py             # 30 unit tests (mocked APIs)
 │
-├── scripts/
-│   ├── test_api.py                 # Manual API smoke test
-│   └── debug_app.py                # Debug helper
-│
-├── .github/
-│   └── workflows/ci.yml            # GitHub Actions CI pipeline
-│
-├── Dockerfile                      # Container definition
-├── requirements.txt                # Python dependencies
-├── .env.example                    # Environment variable template
-└── README.md
+├── .github/workflows/ci.yml         # GitHub Actions CI
+├── Dockerfile
+├── requirements.txt
+└── .env.example
 ```
 
 ---
@@ -203,24 +194,20 @@ Product-Pilot/
 
 ### Prerequisites
 - Python 3.11+
-- [Google AI Studio API Key](https://aistudio.google.com/) (Gemini)
+- [Google AI Studio API Key](https://aistudio.google.com/)
 - [SerpAPI Key](https://serpapi.com/)
 
-### 1. Clone the repository
+### 1. Clone
 ```bash
 git clone https://github.com/rohitaimlpro/Product-Pilot.git
 cd Product-Pilot
 ```
 
-### 2. Create a virtual environment
+### 2. Virtual environment
 ```bash
 python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# Linux / Mac
-source venv/bin/activate
+venv\Scripts\activate    # Windows
+source venv/bin/activate # Linux/Mac
 ```
 
 ### 3. Install dependencies
@@ -228,131 +215,64 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Set up environment variables
+### 4. Environment variables
 ```bash
 cp .env.example .env
 ```
-
-Open `.env` and fill in your keys:
 ```env
 GOOGLE_API_KEY=your_google_gemini_api_key
 SERPAPI_KEY=your_serpapi_key
 ```
 
-### 5. Start the server
+### 5. Run
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-Visit **http://localhost:8000** in your browser.
+Visit **http://localhost:8000**
 
 ---
 
-## Run with Docker
+## Docker
 
 ```bash
-# Build the image
 docker build -t product-pilot .
-
-# Run with your .env file
 docker run -p 8000:8000 --env-file .env product-pilot
 ```
 
 ---
 
-## Run Tests
+## Tests
 
 ```bash
 pytest tests/ -v
 ```
 
-All 30 tests use mocked SerpAPI and Gemini responses — **no API keys required** to run the test suite.
-
-```
-tests/test_workflow.py::test_has_data_empty_list          PASSED
-tests/test_workflow.py::test_has_data_with_prices         PASSED
-tests/test_workflow.py::test_reflect_good_product_info    PASSED
-tests/test_workflow.py::test_price_quality_high_three     PASSED
-tests/test_workflow.py::test_price_agent_uses_hints       PASSED
-... (30/30 passing)
-```
+30 tests, all mocked — no API keys needed.
 
 ---
 
-## Example Queries
-
-| Query | Agents Used | Response Time |
-|---|---|---|
-| `which is more affordable iPhone 14 Pro Max or iPhone 15` | 1 agent | ~15s |
-| `compare specs and price of OnePlus 12 vs Pixel 8` | 2 agents | ~15s |
-| `which has better reviews and ratings Samsung S24 vs iPhone 15` | 2 agents | ~15s |
-| `compare Samsung Galaxy S24 vs iPhone 15` | 4 agents | ~20s |
-| `recommend me a gaming laptop under 80000` | 4 agents | ~20s |
-
----
-
-## API Reference
+## API
 
 ### `POST /api/query`
-
-Request:
 ```json
-{
-  "query": "compare iPhone 15 vs Samsung S24"
-}
+{ "query": "compare iPhone 15 vs Samsung S24" }
 ```
-
-Response:
 ```json
 {
-  "recommendation": "## iPhone 15 vs Samsung Galaxy S24\n\n| Feature | iPhone 15 | Samsung S24 |\n...",
-  "agents_executed": ["product_info_agent", "price_agent", "review_agent", "rating_agent"],
-  "confidence_score": 8
+  "recommendation": "...",
+  "agents_executed": ["price_agent", "product_info_agent", "review_agent", "rating_agent"],
+  "confidence_score": 10
 }
 ```
 
 ### `GET /api/health`
-
 ```json
-{
-  "status": "healthy",
-  "model": "gemini-2.5-flash"
-}
+{ "status": "ok" }
 ```
-
----
-
-## How Agents Are Selected
-
-The supervisor sends one LLM call with the user's query and a strict selection prompt. It returns a JSON array of only the agents needed:
-
-```python
-# "which is cheaper" → ["price_agent"]
-# "compare specs"    → ["product_info_agent"]
-# "compare X vs Y"   → ["product_info_agent", "price_agent", "review_agent", "rating_agent"]
-```
-
-This means simple price queries run in ~15s instead of waiting for all 4 agents.
-
----
-
-## Performance Highlights
-
-| Metric | Before | After |
-|---|---|---|
-| Sequential → Parallel | 60s | 15s (4× faster) |
-| Gemini unbounded reasoning | 290s | 64s (thinking_budget cap) |
-| Test coverage | 0 tests | 30/30 passing |
-| Agents per query (selective) | Always 4 | 1–4 based on intent |
 
 ---
 
 ## License
 
-MIT — feel free to use, fork, and build on this.
-
----
-
-<div align="center">
-Built with LangGraph · Google Gemini 2.5 Flash · FastAPI · SerpAPI
-</div>
+MIT
