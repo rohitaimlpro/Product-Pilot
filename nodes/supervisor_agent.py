@@ -10,6 +10,7 @@ from nodes.product_info_agent import product_info_agent_node
 from nodes.price_agent import price_agent_node
 from nodes.review_agent import review_rating_agent_node
 from nodes.rating_agent import rating_platform_agent_node
+from nodes.recommendation_agent import recommendation_agent_node
 
 logger = logging.getLogger(__name__)
 
@@ -62,55 +63,64 @@ def has_data(data):
     return False
 
 
-# ── PLAN: query-aware agent selection ──
+# ── PLAN: single LLM call → intent + products + agents ──
 
-def create_execution_plan(state: dict) -> list:
+def create_execution_plan(state: dict) -> dict:
     """
-    One LLM call reads the user's actual query and selects the MINIMUM
-    set of agents needed. Fewer agents = faster response.
+    Single LLM call replacing query_parser + old planner.
+    Returns intent, extracted products, and minimum agent list together.
     """
-    prompt = f"""You are a product research supervisor. Pick only the agents this query actually needs — fewer is better.
+    prompt = f"""You are a product research supervisor. Analyze this query and return a single JSON object.
 
 User query: "{state.get("input")}"
-Products: {state.get("products")}
 
-Agents available:
-- product_info_agent → specs, features, display, chipset, camera, battery, storage
-- price_agent        → current retail prices from stores
-- review_agent       → user reviews, pros/cons, real-world experience
-- rating_agent       → platform ratings and review counts
+Return ONLY this JSON (no explanation):
+{{
+  "intent": "comparison" or "recommendation",
+  "products": ["Brand Model", ...],
+  "agents": ["agent1", ...]
+}}
 
-Selection rules — use the MINIMUM set:
-- "affordable" / "price" / "cheaper" / "cost" / "budget" / "under X"  → ["price_agent"]
-- "specs" / "features" / "display" / "camera" / "battery" / "compare specs" → ["product_info_agent"]
-- "reviews" / "experience" / "reliable" / "worth it" / "problems"     → ["review_agent"]
-- "rated" / "popular" / "best rated" / "rating"                       → ["rating_agent"]
-- price + specs needed together                                        → ["price_agent", "product_info_agent"]
-- reviews + ratings needed together                                    → ["review_agent", "rating_agent"]
-- broad "compare X vs Y" with no specific angle                        → ["product_info_agent", "price_agent", "review_agent", "rating_agent"]
-- broad recommendation with no specific angle                          → ["product_info_agent", "price_agent", "review_agent", "rating_agent"]
+Intent rules:
+- "comparison" → user mentions 2+ specific products, uses vs/compare/versus/difference/better
+- "recommendation" → user wants suggestions, best X, recommend, under price, gaming laptop etc.
 
-Do NOT add extra agents just because they might be useful. Match the query intent exactly.
+Product extraction:
+- Keep full names: "iPhone 15 Pro Max" not "iPhone". Include brand + model.
+- For recommendation queries return []
 
-Respond with ONLY a JSON array. Examples:
-- "which is cheaper" → ["price_agent"]
-- "compare specs" → ["product_info_agent"]
-- "which has better reviews and ratings" → ["review_agent", "rating_agent"]
-- "compare iPhone 15 vs S24" → ["product_info_agent", "price_agent", "review_agent", "rating_agent"]"""
+Agent selection — pick MINIMUM needed:
+- price_agent        → affordable / price / cheaper / cost / budget / under X
+- product_info_agent → specs / features / display / camera / battery / chipset
+- review_agent       → reviews / experience / reliable / worth it / problems
+- rating_agent       → rated / popular / rating / best rated
+- price + specs together → both agents
+- reviews + ratings together → both agents
+- broad compare or recommendation (no specific angle) → all 4
+
+Examples:
+{{"intent":"comparison","products":["iPhone 15","Samsung Galaxy S24"],"agents":["price_agent"]}}
+{{"intent":"comparison","products":["OnePlus 12","Pixel 8"],"agents":["product_info_agent","price_agent"]}}
+{{"intent":"comparison","products":["Samsung Galaxy S24","iPhone 15"],"agents":["product_info_agent","price_agent","review_agent","rating_agent"]}}
+{{"intent":"recommendation","products":[],"agents":["product_info_agent","price_agent","review_agent","rating_agent"]}}"""
 
     try:
         response = get_llm().invoke([HumanMessage(content=prompt)])
         content = response.content.strip()
-        start, end = content.find("["), content.rfind("]") + 1
+        start, end = content.find("{"), content.rfind("}") + 1
         if start >= 0 and end > start:
-            plan = json.loads(content[start:end])
-            valid = [a for a in plan if a in AGENT_MAP]
-            if len(valid) >= 1:
-                return valid
+            parsed = json.loads(content[start:end])
+            intent   = parsed.get("intent", "recommendation")
+            products = [str(p).strip() for p in parsed.get("products", []) if p]
+            agents   = [a for a in parsed.get("agents", []) if a in AGENT_MAP]
+            if not agents:
+                agents = list(AGENT_MAP.keys())
+            log_message("PLAN", f"intent={intent} products={products} agents={agents}")
+            return {"intent": intent, "products": products, "agents": agents}
     except Exception as e:
         log_message("PLAN_ERROR", str(e))
 
-    return ["product_info_agent", "price_agent", "review_agent", "rating_agent"]
+    return {"intent": "recommendation", "products": [], "agents": list(AGENT_MAP.keys())}
 
 
 # ── OBSERVE: rule-based reflection using agent confidence signals ──
@@ -238,10 +248,11 @@ def run_agent_with_reflection(state: dict, agent_name: str) -> dict:
 
 def supervisor_agent_node(state: dict) -> dict:
     """
-    Agentic supervisor with three phases:
+    Agentic supervisor — now the single entry point replacing query_parser.
 
     Phase 1 — PLAN (one LLM call):
-        Reads the user's query and selects which agents to run.
+        Detects intent, extracts products, and selects minimum agents.
+        For recommendation queries, calls recommendation_agent to generate products first.
 
     Phase 2 — EXECUTE (parallel):
         All planned agents run simultaneously via ThreadPoolExecutor.
@@ -252,18 +263,28 @@ def supervisor_agent_node(state: dict) -> dict:
         Confidence check. Adds rating_agent if score < 7 and it wasn't in the plan.
     """
     try:
-        products = state.get("products", [])
+        # ── PHASE 1: PLAN ──
+        log_message("SUPERVISOR", "Parsing query and building plan", {"query": state.get("input")})
+        plan = create_execution_plan(state)
+
+        intent    = plan["intent"]
+        products  = plan["products"]
+        agent_plan = plan["agents"]
+
+        state = {**state, "intent": intent}
+
+        # For recommendation queries, generate product list first
+        if intent == "recommendation" or not products:
+            log_message("SUPERVISOR", "Recommendation query — generating product list")
+            state = recommendation_agent_node(state)
+            products = state.get("products", [])
+        else:
+            state = {**state, "products": products}
 
         if not products:
             return {**state, "collection_complete": True, "current_step": "No products found"}
 
-        # ── PHASE 1: PLAN ──
-        log_message("SUPERVISOR", "Building execution plan", {
-            "query": state.get("input"),
-            "products": products,
-        })
-        agent_plan = create_execution_plan(state)
-        log_message("SUPERVISOR_PLAN", f"Query-aware plan: {agent_plan}")
+        log_message("SUPERVISOR_PLAN", f"intent={intent} products={products} agents={agent_plan}")
 
         # ── PHASE 2: PARALLEL EXECUTE ──
         log_message("SUPERVISOR", f"Running {len(agent_plan)} agents in parallel")
