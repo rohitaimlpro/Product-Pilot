@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from app.core.llm_utils import invoke_with_retry
+from app.core.config import GEMINI_MODEL, GOOGLE_API_KEY
 
 from nodes.product_info_agent import product_info_agent_node
 from nodes.price_agent import price_agent_node
@@ -20,7 +21,7 @@ _llm = None
 def get_llm() -> ChatGoogleGenerativeAI:
     global _llm
     if _llm is None:
-        _llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+        _llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0, google_api_key=GOOGLE_API_KEY)
     return _llm
 
 AGENT_MAP = {
@@ -204,7 +205,7 @@ Respond ONLY with a single integer 1-10."""
         digits = "".join(filter(str.isdigit, invoke_with_retry(get_llm(), [HumanMessage(content=prompt)], context="confidence").strip()))
         score = int(digits[:2]) if digits else 5
         return min(max(score, 1), 10)
-    except:
+    except Exception:
         return 5
 
 

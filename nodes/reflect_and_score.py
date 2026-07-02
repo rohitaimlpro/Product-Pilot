@@ -1,8 +1,8 @@
-import os
 import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from app.core.llm_utils import invoke_with_retry
+from app.core.config import GEMINI_MODEL, GOOGLE_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -12,9 +12,9 @@ def get_llm() -> ChatGoogleGenerativeAI:
     global _llm
     if _llm is None:
         _llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model=GEMINI_MODEL,
             temperature=1,
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            google_api_key=GOOGLE_API_KEY,
             model_kwargs={
                 "generation_config": {
                     "thinking_config": {"thinking_budget": 512}

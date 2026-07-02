@@ -102,7 +102,7 @@ Format: ["Product 1", "Product 2", "Product 3"]"""
                 logger.info("Recommendation agent generated %d products: %s", len(products), products)
             else:
                 raise ValueError("Empty or invalid product list")
-        except:
+        except Exception:
             # Fallback parsing: extract from text
             logger.warning("JSON parsing failed, attempting text extraction from: %s", content[:200])
             
