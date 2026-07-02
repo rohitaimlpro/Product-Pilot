@@ -87,7 +87,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_llm():
-    # thinking_budget=1024 limits deep reasoning to ~30s instead of 4+ minutes
+    # thinking_budget=256 caps reasoning for faster responses
     # while still producing well-reasoned comparisons
     return ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
@@ -95,7 +95,7 @@ def get_llm():
         google_api_key=os.getenv("GOOGLE_API_KEY"),
         model_kwargs={
             "generation_config": {
-                "thinking_config": {"thinking_budget": 1024}
+                "thinking_config": {"thinking_budget": 256}
             }
         }
     )
