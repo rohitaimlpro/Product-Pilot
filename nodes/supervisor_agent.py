@@ -315,25 +315,10 @@ def supervisor_agent_node(state: dict) -> dict:
         merged["agent_plan"] = agent_plan
         merged["agents_executed"] = agents_executed
 
-        # ── PHASE 3: CONFIDENCE CHECK ──
-        log_message("SUPERVISOR", "Scoring data confidence")
-        confidence = get_confidence_score(merged)
-        log_message("CONFIDENCE", f"Score: {confidence}/10")
-
-        if confidence < 7 and "rating_agent" not in agents_executed:
-            log_message("SUPERVISOR", f"Confidence {confidence}/10 — adding rating_agent")
-            rating_result = run_agent_with_reflection(dict(merged), "rating_agent")
-            merged[AGENT_OUTPUT_KEYS["rating_agent"]] = rating_result.get(AGENT_OUTPUT_KEYS["rating_agent"], [])
-            agents_executed.append("rating_agent")
-            merged["agents_executed"] = agents_executed
-            confidence = get_confidence_score(merged)
-            log_message("CONFIDENCE", f"Score after ratings: {confidence}/10")
-
         return {
             **merged,
             "collection_complete": True,
-            "confidence_score": confidence,
-            "current_step": f"Collection complete (parallel). Agents: {agents_executed}. Confidence: {confidence}/10",
+            "current_step": f"Collection complete. Agents: {agents_executed}",
         }
 
     except Exception as e:
