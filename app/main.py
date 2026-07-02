@@ -21,10 +21,22 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
+import json as _json
+
+class JsonFormatter(logging.Formatter):
+    """Structured JSON logs — parseable by any log aggregator."""
+    def format(self, record: logging.LogRecord) -> str:
+        record.request_id = request_id_var.get("-")
+        return _json.dumps({
+            "time":       self.formatTime(record),
+            "level":      record.levelname,
+            "request_id": record.request_id,
+            "logger":     record.name,
+            "message":    record.getMessage(),
+        }, ensure_ascii=False)
+
 handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter(
-    "%(asctime)s [%(levelname)s] [req:%(request_id)s] %(name)s: %(message)s"
-))
+handler.setFormatter(JsonFormatter())
 handler.addFilter(RequestIdFilter())
 logging.root.setLevel(logging.INFO)
 logging.root.handlers = [handler]

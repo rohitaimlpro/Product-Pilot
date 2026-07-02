@@ -1,6 +1,10 @@
+import os
+import time
+import hashlib
 import asyncio
 import logging
 import traceback
+from functools import lru_cache
 
 from fastapi import APIRouter, HTTPException, Request
 from slowapi import Limiter
@@ -18,11 +22,51 @@ router = APIRouter()
 workflow = create_workflow()
 
 MAX_QUERY_LENGTH = 500
+CACHE_TTL = 3600  # cache results for 1 hour
+
+# In-memory response cache: query_hash → {result, timestamp}
+_cache: dict = {}
+
+
+def _cache_key(query: str) -> str:
+    return hashlib.md5(query.lower().strip().encode()).hexdigest()
+
+
+def _get_cached(query: str):
+    key = _cache_key(query)
+    entry = _cache.get(key)
+    if entry and (time.time() - entry["ts"]) < CACHE_TTL:
+        return entry["result"]
+    return None
+
+
+def _set_cache(query: str, result: dict):
+    key = _cache_key(query)
+    _cache[key] = {"result": result, "ts": time.time()}
+    # Evict oldest entries if cache grows too large
+    if len(_cache) > 500:
+        oldest = sorted(_cache.items(), key=lambda x: x[1]["ts"])[:100]
+        for k, _ in oldest:
+            del _cache[k]
 
 
 @router.get("/health")
 def health():
-    return {"status": "ok"}
+    """Real health check — verifies env vars are set."""
+    issues = []
+    if not os.getenv("GOOGLE_API_KEY"):
+        issues.append("GOOGLE_API_KEY not set")
+    if not os.getenv("SERPAPI_KEY") and not os.getenv("SERP_API_KEY"):
+        issues.append("SERPAPI_KEY not set")
+
+    if issues:
+        raise HTTPException(status_code=503, detail={"status": "degraded", "issues": issues})
+
+    return {
+        "status": "ok",
+        "cache_size": len(_cache),
+        "model": "gemini-2.5-flash"
+    }
 
 
 @router.post("/query")
@@ -40,12 +84,16 @@ async def process_query(request: Request, payload: dict):
             detail=f"Query exceeds {MAX_QUERY_LENGTH} character limit."
         )
 
-    # Per-request logger — no shared state between concurrent requests
+    # ── Cache hit ──
+    cached = _get_cached(user_input)
+    if cached:
+        logger.info("Cache hit for query: %s", user_input[:60])
+        return {**cached, "cached": True}
+
     debug_logger = DebugLogger()
 
     try:
-        logger.info("Query received: %s", user_input[:100])
-        debug_logger.log("START", "New query received", {"query": user_input, "request_id": request_id})
+        logger.info("[%s] Query received: %s", request_id, user_input[:100])
 
         initial_state = GraphState(
             input=user_input,
@@ -66,22 +114,23 @@ async def process_query(request: Request, payload: dict):
             agents_executed=[]
         )
 
-        # Run blocking LangGraph workflow in thread pool — frees event loop for other requests
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, workflow.invoke, initial_state)
 
         recommendation = result.get("final_recommendation", "No recommendation generated.")
+        logger.info("[%s] Query complete. Confidence: %s/10", request_id, result.get("confidence_score"))
 
-        logger.info("Query complete. Confidence: %s/10", result.get("confidence_score", "N/A"))
-        debug_logger.log("RESULT", "Final recommendation", {"recommendation": recommendation})
-
-        return {
+        response = {
             "success": True,
             "recommendation": recommendation,
-            "debug_logs": debug_logger.get_logs()
+            "agents_executed": result.get("agents_executed", []),
+            "confidence_score": result.get("confidence_score", 0),
+            "cached": False,
         }
 
+        _set_cache(user_input, response)
+        return response
+
     except Exception as e:
-        logger.error("Query failed: %s", str(e), exc_info=True)
-        debug_logger.log("ERROR", str(e), {"traceback": traceback.format_exc()})
+        logger.error("[%s] Query failed: %s", request_id, str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

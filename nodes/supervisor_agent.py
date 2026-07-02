@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
+from app.core.llm_utils import invoke_with_retry
 
 from nodes.product_info_agent import product_info_agent_node
 from nodes.price_agent import price_agent_node
@@ -105,8 +106,7 @@ Examples:
 {{"intent":"recommendation","products":[],"agents":["product_info_agent","price_agent","review_agent","rating_agent"]}}"""
 
     try:
-        response = get_llm().invoke([HumanMessage(content=prompt)])
-        content = response.content.strip()
+        content = invoke_with_retry(get_llm(), [HumanMessage(content=prompt)], context="supervisor").strip()
         start, end = content.find("{"), content.rfind("}") + 1
         if start >= 0 and end > start:
             parsed = json.loads(content[start:end])
@@ -172,8 +172,7 @@ Respond ONLY with a JSON object mapping each product to an improved query.
 Example: {{"iPhone 15": "Apple iPhone 15 128GB price India 2024"}}"""
 
     try:
-        response = get_llm().invoke([HumanMessage(content=prompt)])
-        content = response.content.strip()
+        content = invoke_with_retry(get_llm(), [HumanMessage(content=prompt)], context="reformulate").strip()
         start, end = content.find("{"), content.rfind("}") + 1
         if start >= 0 and end > start:
             return json.loads(content[start:end])
@@ -202,8 +201,7 @@ Review confidence: {[i.get("reviews", {}).get("review_confidence") for i in stat
 Respond ONLY with a single integer 1-10."""
 
     try:
-        response = get_llm().invoke([HumanMessage(content=prompt)])
-        digits = "".join(filter(str.isdigit, response.content.strip()))
+        digits = "".join(filter(str.isdigit, invoke_with_retry(get_llm(), [HumanMessage(content=prompt)], context="confidence").strip()))
         score = int(digits[:2]) if digits else 5
         return min(max(score, 1), 10)
     except:

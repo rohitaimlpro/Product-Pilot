@@ -2,6 +2,7 @@ import os
 import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
+from app.core.llm_utils import invoke_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +58,7 @@ Score guide:
 
     import json
     try:
-        response = get_llm().invoke([HumanMessage(content=prompt)])
-        content = response.content.strip()
+        content = invoke_with_retry(get_llm(), [HumanMessage(content=prompt)], context="reflect_and_score").strip()
         start, end = content.find("{"), content.rfind("}") + 1
         if start >= 0 and end > start:
             parsed = json.loads(content[start:end])

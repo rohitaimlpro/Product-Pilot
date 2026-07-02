@@ -82,6 +82,7 @@ import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 import os
 import json
+from app.core.llm_utils import invoke_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -195,13 +196,7 @@ OUTPUT STYLE
         # -----------------------------
         # LLM Call
         # -----------------------------
-        response = llm.invoke(prompt)
-
-        final_recommendation = (
-            response.content
-            if hasattr(response, "content")
-            else str(response)
-        )
+        final_recommendation = invoke_with_retry(llm, prompt, context="analyzer")
 
         return {
             **state,
