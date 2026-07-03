@@ -1,9 +1,9 @@
-import os
 import logging
 import json
 import requests
-from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import Dict, Any
+from app.core.config import SERPAPI_KEY
+from app.core.llm_utils import invoke_with_retry, get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ def recommendation_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     
     # Try to get products from SERP API first
     try:
-        serpapi_key = os.getenv("SERP_API_KEY")
+        serpapi_key = SERPAPI_KEY
         if serpapi_key:
             search_query = f"{user_input} best products to buy"
             url = "https://serpapi.com/search"
@@ -57,12 +57,7 @@ def recommendation_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.warning("SERP API error: %s", str(e))
     
-    # Initialize LLM
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        temperature=0.3,  # Slightly higher for creative product suggestions
-        google_api_key=os.getenv("GOOGLE_API_KEY")
-    )
+    llm = get_llm(temperature=0.3)
     
     prompt = f"""You are a product recommendation expert. Based on the user's query, suggest 2-3 specific product names/models.
 
@@ -90,8 +85,7 @@ Respond with ONLY a JSON array of product names, nothing else.
 Format: ["Product 1", "Product 2", "Product 3"]"""
 
     try:
-        response = llm.invoke(prompt)
-        content = response.content.strip()
+        content = invoke_with_retry(llm, prompt, context="recommendation").strip()
         
         # Try to parse as JSON
         try:

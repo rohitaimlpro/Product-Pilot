@@ -3,10 +3,8 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
-from app.core.llm_utils import invoke_with_retry
-from app.core.config import GEMINI_MODEL, GOOGLE_API_KEY
+from app.core.llm_utils import invoke_with_retry, get_llm
 
 from nodes.product_info_agent import product_info_agent_node
 from nodes.price_agent import price_agent_node
@@ -16,13 +14,6 @@ from nodes.recommendation_agent import recommendation_agent_node
 
 logger = logging.getLogger(__name__)
 
-_llm = None
-
-def get_llm() -> ChatGoogleGenerativeAI:
-    global _llm
-    if _llm is None:
-        _llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0, google_api_key=GOOGLE_API_KEY)
-    return _llm
 
 AGENT_MAP = {
     "product_info_agent": product_info_agent_node,

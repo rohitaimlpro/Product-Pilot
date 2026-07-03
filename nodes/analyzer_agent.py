@@ -1,23 +1,8 @@
 import json
 import logging
-from langchain_google_genai import ChatGoogleGenerativeAI
-from app.core.llm_utils import invoke_with_retry
-from app.core.config import GEMINI_MODEL, GOOGLE_API_KEY
+from app.core.llm_utils import invoke_with_retry, get_llm
 
 logger = logging.getLogger(__name__)
-
-
-def get_llm():
-    return ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL,
-        temperature=1,
-        google_api_key=GOOGLE_API_KEY,
-        model_kwargs={
-            "generation_config": {
-                "thinking_config": {"thinking_budget": 256}
-            }
-        }
-    )
 
 
 def analyzer_agent_node(state: dict) -> dict:
@@ -27,7 +12,7 @@ def analyzer_agent_node(state: dict) -> dict:
     """
 
     try:
-        llm = get_llm()
+        llm = get_llm(thinking_budget=256)
 
         # -----------------------------
         # Extract state safely

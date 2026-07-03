@@ -1,27 +1,8 @@
 import logging
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
-from app.core.llm_utils import invoke_with_retry
-from app.core.config import GEMINI_MODEL, GOOGLE_API_KEY
+from app.core.llm_utils import invoke_with_retry, get_llm
 
 logger = logging.getLogger(__name__)
-
-_llm = None
-
-def get_llm() -> ChatGoogleGenerativeAI:
-    global _llm
-    if _llm is None:
-        _llm = ChatGoogleGenerativeAI(
-            model=GEMINI_MODEL,
-            temperature=1,
-            google_api_key=GOOGLE_API_KEY,
-            model_kwargs={
-                "generation_config": {
-                    "thinking_config": {"thinking_budget": 512}
-                }
-            }
-        )
-    return _llm
 
 
 def _run(state: dict) -> tuple[int, str]:
@@ -58,7 +39,7 @@ Score guide:
 
     import json
     try:
-        content = invoke_with_retry(get_llm(), [HumanMessage(content=prompt)], context="reflect_and_score").strip()
+        content = invoke_with_retry(get_llm(thinking_budget=512), [HumanMessage(content=prompt)], context="reflect_and_score").strip()
         start, end = content.find("{"), content.rfind("}") + 1
         if start >= 0 and end > start:
             parsed = json.loads(content[start:end])

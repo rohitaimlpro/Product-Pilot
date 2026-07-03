@@ -1,8 +1,34 @@
 import time
 import logging
 from langchain_core.messages import HumanMessage
+from app.core.config import LLM_PROVIDER, GEMINI_MODEL, GOOGLE_API_KEY, QWEN_MODEL, OLLAMA_BASE_URL
 
 logger = logging.getLogger(__name__)
+
+
+def get_llm(thinking_budget: int = 0, temperature: float = 0, force_provider: str = None):
+    """
+    Factory that returns the right LLM based on LLM_PROVIDER env var.
+    - LLM_PROVIDER=gemini  → Google Gemini 2.5 Flash (default)
+    - LLM_PROVIDER=qwen    → Qwen3 1.7B via local Ollama
+    force_provider overrides LLM_PROVIDER for a single call (e.g. force_provider="gemini").
+    thinking_budget is Gemini-only; ignored for Qwen.
+    """
+    provider = force_provider or LLM_PROVIDER
+
+    if provider == "qwen":
+        from langchain_ollama import ChatOllama
+        return ChatOllama(model=QWEN_MODEL, base_url=OLLAMA_BASE_URL, temperature=temperature)
+
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    if thinking_budget > 0:
+        return ChatGoogleGenerativeAI(
+            model=GEMINI_MODEL,
+            temperature=1,
+            google_api_key=GOOGLE_API_KEY,
+            model_kwargs={"generation_config": {"thinking_config": {"thinking_budget": thinking_budget}}}
+        )
+    return ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=temperature, google_api_key=GOOGLE_API_KEY)
 
 _MAX_RETRIES = 2
 _RETRY_DELAY = 2  # seconds between retries
