@@ -14,6 +14,8 @@ from app.core.workflow import create_workflow
 from app.models.graph_state import GraphState
 from app.core.logger import DebugLogger
 from app.core.request_context import new_request_id
+from app.core.guardrails import check_input
+from app.core.config import LLM_PROVIDER, GEMINI_MODEL, QWEN_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,8 @@ def health():
     return {
         "status": "ok",
         "cache_size": len(_cache),
-        "model": "gemini-2.5-flash"
+        "provider": LLM_PROVIDER,
+        "model": GEMINI_MODEL if LLM_PROVIDER == "gemini" else QWEN_MODEL,
     }
 
 
@@ -83,6 +86,11 @@ async def process_query(request: Request, payload: dict):
             status_code=400,
             detail=f"Query exceeds {MAX_QUERY_LENGTH} character limit."
         )
+
+    is_safe, reason = check_input(user_input)
+    if not is_safe:
+        logger.warning("[%s] Guardrail blocked query: %s", request_id, reason)
+        raise HTTPException(status_code=400, detail=f"Query blocked: {reason}")
 
     # ── Cache hit ──
     cached = _get_cached(user_input)

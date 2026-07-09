@@ -1,5 +1,6 @@
 import time
 import logging
+import json
 from langchain_core.messages import HumanMessage
 from app.core.config import LLM_PROVIDER, GEMINI_MODEL, GOOGLE_API_KEY, QWEN_MODEL, OLLAMA_BASE_URL
 
@@ -43,13 +44,18 @@ def invoke_with_retry(llm, messages, context: str = "LLM") -> str:
     if isinstance(messages, str):
         messages = [HumanMessage(content=messages)]
 
+    model_name = getattr(llm, "model", type(llm).__name__)
+
     last_error = None
     for attempt in range(1, _MAX_RETRIES + 2):
+        t0 = time.time()
         try:
             response = llm.invoke(messages)
+            _audit(context, model_name, attempt, round((time.time() - t0) * 1000), True, messages)
             return response.content
         except Exception as e:
             last_error = e
+            _audit(context, model_name, attempt, round((time.time() - t0) * 1000), False, messages, str(e))
             if attempt <= _MAX_RETRIES:
                 logger.warning("%s attempt %d failed: %s — retrying in %ds",
                                context, attempt, e, _RETRY_DELAY)
@@ -58,3 +64,19 @@ def invoke_with_retry(llm, messages, context: str = "LLM") -> str:
                 logger.error("%s failed after %d attempts: %s", context, attempt, e)
 
     raise last_error
+
+
+def _audit(context: str, model: str, attempt: int, latency_ms: int, success: bool, messages, error: str = None):
+    input_chars = sum(len(m.content) for m in messages) if isinstance(messages, list) else len(str(messages))
+    entry = {
+        "audit": True,
+        "context": context,
+        "model": model,
+        "attempt": attempt,
+        "latency_ms": latency_ms,
+        "input_chars": input_chars,
+        "success": success,
+    }
+    if error:
+        entry["error"] = error
+    logger.info(json.dumps(entry))
